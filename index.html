@@ -42,3 +42,224 @@ th{color:#9aabc1}
 <thead><tr><th>Market</th><th>Price</th><th>Movement</th><th>Signal</th></tr></thead>
 <tbody id="markets"
 <p class="sub">Simulation only. No real orders are placed.</p>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sammy AI Trader V2</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#08111f;color:#fff;font-family:Arial,sans-serif;padding:14px}
+header{padding:15px 0}
+h1{color:#35d6a0;margin:0;font-size:25px}
+.sub{color:#9aabc1;font-size:12px}
+.card{background:#142238;border:1px solid #263b56;border-radius:13px;padding:14px;margin:13px 0}
+.row{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.big{font-size:23px;font-weight:bold;color:#35d6a0}
+button,select{background:#19a879;color:white;border:0;padding:11px;border-radius:8px;font-weight:bold}
+select{background:#203650}
+#status{color:#ffcc66}
+table{width:100%;border-collapse:collapse;font-size:12px;min-width:850px}
+td,th{padding:11px 7px;text-align:left;border-bottom:1px solid #293b50;white-space:nowrap}
+th{color:#9aabc1}
+.green{color:#35d6a0}.red{color:#ff7777}.yellow{color:#ffcc66}
+.tablewrap{overflow-x:auto}
+.small{font-size:11px;color:#9aabc1}
+</style>
+</head>
+<body>
+<header>
+<h1>⚡ SAMMY AI TRADER</h1>
+<div class="sub">V2 | Deriv Live Market Scanner | Demo Research Mode</div>
+</header>
+
+<div class="card">
+<div class="row">
+<div><div class="sub">CONNECTION</div><div id="status">Connecting...</div></div>
+<div><div class="sub">MARKETS SCANNED</div><div class="big" id="count">0</div></div>
+<div><div class="sub">ACTIVE SIGNALS</div><div class="big" id="signals">0</div></div>
+</div>
+</div>
+
+<div class="card">
+<div class="sub">MARKET CATEGORY</div>
+<select id="category" onchange="render()">
+<option value="all">All synthetic markets</option>
+<option value="volatility">Volatility indices</option>
+<option value="1hz">1-second indices</option>
+</select>
+<p class="small">Live prices received from Deriv public market feed.</p>
+</div>
+
+<div class="card">
+<div class="row"><strong>📡 Market Scanner</strong><button onclick="connect()">Reconnect</button></div>
+<p class="small">Swipe horizontally to view all scanner columns.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Market</th><th>Price</th><th>Move</th><th>Trend</th><th>Signal</th><th>Confidence</th><th>Entry</th><th>Stop Loss</th><th>Take Profit</th></tr></thead>
+<tbody id="markets"><tr><td colspan="9">Waiting for live ticks...</td></tr></tbody>
+</table>
+</div>
+</div>
+
+<div class="card">
+<strong>🧪 Paper Trading</strong>
+<p class="small">Simulation research only. No orders are placed.</p>
+<div class="row">
+<div><div class="sub">Virtual balance</div><div class="big">$10,000</div></div>
+<div><div class="sub">Real trading</div><div class="red">OFF</div></div>
+<div><div class="sub">Execution</div><div class="yellow">DISABLED</div></div>
+</div>
+</div>
+
+<div class="card">
+<strong>🛡️ Risk Management</strong>
+<p>Maximum simulated trades: 5 per session</p>
+<p>Daily simulated loss limit: $50</p>
+<p class="small">Stop Loss and Take Profit are estimates based on recent price movement. They are not validated trading instructions.</p>
+<p class="red">Automatic execution: OFF</p>
+</div>
+
+<div class="card">
+<strong>How signals work</strong>
+<p class="small">BUY: upward price momentum with directional agreement.<br>SELL: downward price momentum with directional agreement.<br>WAIT: insufficient or conflicting market movement.<br>Confidence is a heuristic score, not the probability of winning.</p>
+</div>
+
+<script>
+const symbols=["R_10","R_25","R_50","R_75","R_100","1HZ10V","1HZ25V","1HZ50V","1HZ75V","1HZ100V"];
+let ws=null;
+let data={};
+
+function connect(){
+ if(ws){const old=ws;ws=null;old.close();}
+ document.getElementById("status").textContent="Connecting...";
+ const socket=new WebSocket("wss://api.derivws.com/trading/v1/options/ws/public");
+ ws=socket;
+
+ socket.onopen=()=>{
+  if(ws!==socket)return;
+  document.getElementById("status").textContent="Connected to public feed";
+  symbols.forEach(symbol=>socket.send(JSON.stringify({ticks:symbol,subscribe:1})));
+ };
+
+ socket.onmessage=(event)=>{
+  if(ws!==socket)return;
+  let msg;
+  try{msg=JSON.parse(event.data)}catch(e){return}
+  if(msg.error){
+   document.getElementById("status").textContent="Feed error: "+msg.error.message;
+   return;
+  }
+  if(msg.msg_type==="tick"){
+   const t=msg.tick;
+   let d=data[t.symbol]||{prices:[]};
+   d.prices.push(Number(t.quote));
+   if(d.prices.length>20)d.prices.shift();
+   d.price=Number(t.quote);
+   d.quote=String(t.quote);
+   data[t.symbol]=d;
+   render();
+  }
+ };
+
+ socket.onclose=()=>{
+  if(ws===socket)document.getElementById("status").textContent="Disconnected";
+ };
+ socket.onerror=()=>{
+  if(ws===socket)document.getElementById("status").textContent="Connection error";
+ };
+}
+
+function analyze(prices){
+ const n=prices.length;
+ if(n<8)return {signal:"WAIT",trend:"Collecting",confidence:0,move:0,entry:prices[n-1]||0,sl:0,tp:0};
+
+ const first=prices[0],last=prices[n-1];
+ const move=first!==0?((last-first)/first)*100:0;
+ let ups=0,downs=0,totalChange=0;
+
+ for(let i=1;i<n;i++){
+  const diff=prices[i]-prices[i-1];
+  totalChange+=Math.abs(diff);
+  if(diff>0)ups++;
+  if(diff<0)downs++;
+ }
+
+ const changes=n-1;
+ const direction=move>=0?"UP":"DOWN";
+ const agreement=direction==="UP"?ups/changes:downs/changes;
+ const avgChange=totalChange/changes;
+ const threshold=Math.max(Math.abs(last)*0.00002,avgChange*1.2);
+ const netMove=Math.abs(last-first);
+
+ let signal="WAIT",trend="SIDEWAYS",confidence=0;
+
+ if(netMove>threshold && agreement>=0.65){
+  signal=direction==="UP"?"BUY":"SELL";
+  trend=direction==="UP"?"UPTREND":"DOWNTREND";
+  confidence=Math.min(90,Math.round(50+Math.min(25,(netMove/threshold)*5)+(agreement-0.5)*30));
+ }else if(move>0){
+  trend="WEAK UP";
+ }else if(move<0){
+  trend="WEAK DOWN";
+ }
+
+ const risk=Math.max(avgChange*2,Math.abs(last)*0.0002);
+ const entry=last;
+ let sl=0,tp=0;
+
+ if(signal==="BUY"){sl=entry-risk;tp=entry+(risk*1.5);}
+ else if(signal==="SELL"){sl=entry+risk;tp=entry-(risk*1.5);}
+
+ return {signal,trend,confidence,move,entry,sl,tp};
+}
+
+function formatPrice(value,quote){
+ if(!value)return "-";
+ const decimals=(quote.split(".")[1]||"").length;
+ return value.toFixed(Math.min(8,Math.max(2,decimals)));
+}
+
+function render(){
+ const category=document.getElementById("category").value;
+ const rows=Object.entries(data).filter(([s])=>{
+  if(category==="volatility")return !s.startsWith("1HZ");
+  if(category==="1hz")return s.startsWith("1HZ");
+  return true;
+ });
+
+ document.getElementById("count").textContent=rows.length;
+ const active=rows.filter(([s,d])=>analyze(d.prices).signal!=="WAIT").length;
+ document.getElementById("signals").textContent=active;
+
+ const body=document.getElementById("markets");
+ if(!rows.length){
+  body.innerHTML='<tr><td colspan="9">Waiting for live ticks...</td></tr>';
+  return;
+ }
+
+ body.innerHTML=rows.map(([symbol,d])=>{
+  const a=analyze(d.prices);
+  const moveClass=a.move>=0?"green":"red";
+  const signalClass=a.signal==="BUY"?"green":a.signal==="SELL"?"red":"yellow";
+
+  return `<tr>
+   <td>${symbol}</td>
+   <td>${formatPrice(d.price,d.quote)}</td>
+   <td class="${moveClass}">${a.move.toFixed(4)}%</td>
+   <td>${a.trend}</td>
+   <td class="${signalClass}"><strong>${a.signal}</strong></td>
+   <td>${a.confidence?a.confidence+"%":"-"}</td>
+   <td>${a.signal==="WAIT"?"-":formatPrice(a.entry,d.quote)}</td>
+   <td>${a.sl?formatPrice(a.sl,d.quote):"-"}</td>
+   <td>${a.tp?formatPrice(a.tp,d.quote):"-"}</td>
+  </tr>`;
+ }).join("");
+}
+
+connect();
+</script>
+</body>
+</html>
