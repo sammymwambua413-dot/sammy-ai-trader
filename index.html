@@ -95,7 +95,7 @@ let subscriptions = {};
 function connect(){
  if(ws) ws.close();
  document.getElementById("status").textContent="Connecting...";
- ws=new WebSocket("wss://ws.derivws.com/websockets/v3?app_id="+APP_ID);
+ ws=new WebSocket("wss://api.derivws.com/trading/v1/options/ws/public");
 
  ws.onopen=()=>{
   document.getElementById("status").textContent="Connected to public feed";
